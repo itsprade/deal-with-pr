@@ -32,9 +32,22 @@ final class PRStore {
     private(set) var reviewRequests: [PullRequest] = []
     private(set) var stats: Stats?
     private(set) var graph: ContributionGraph?
-    var statsRange: StatsRange = .thisMonth
     private(set) var loadState: LoadState = .idle
     private(set) var lastUpdated: Date?
+
+    // User preferences (persisted in UserDefaults)
+    var statsRange: StatsRange = StatsRange(rawValue: UserDefaults.standard.string(forKey: "dwpr.statsRange") ?? "") ?? .thisMonth {
+        didSet { UserDefaults.standard.set(statsRange.rawValue, forKey: "dwpr.statsRange") }
+    }
+    var refreshMinutes: Int = {
+        let stored = UserDefaults.standard.integer(forKey: "dwpr.refreshMinutes")
+        return stored == 0 ? 5 : stored
+    }() {
+        didSet {
+            UserDefaults.standard.set(refreshMinutes, forKey: "dwpr.refreshMinutes")
+            scheduleTimer()
+        }
+    }
 
     // Private plumbing
     private let service = GitHubService()
@@ -42,8 +55,6 @@ final class PRStore {
     private var knownReviewURLs: Set<String> = []
     private var hasBaseline = false
     private(set) var isRefreshing = false
-
-    private let refreshInterval: TimeInterval = 300 // 5 minutes
 
     // MARK: - Derived views for the UI
 
@@ -71,7 +82,12 @@ final class PRStore {
     func start() {
         Task { await requestNotificationAuthorization() }
         refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
+        scheduleTimer()
+    }
+
+    private func scheduleTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: TimeInterval(refreshMinutes * 60), repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
     }

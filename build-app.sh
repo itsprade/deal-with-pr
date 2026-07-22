@@ -41,6 +41,27 @@ mkdir -p "${APP_DIR}/Contents/Resources"
 
 cp "$BIN_PATH" "${APP_DIR}/Contents/MacOS/${EXECUTABLE}"
 
+ICON_PLIST=""
+if [ -f "Icon.png" ]; then
+  echo "▶ Generating app icon…"
+  ICONSET="$(mktemp -d)/AppIcon.iconset"
+  mkdir -p "$ICONSET"
+  for SPEC in "16:16x16" "32:16x16@2x" "32:32x32" "64:32x32@2x" \
+              "128:128x128" "256:128x128@2x" "256:256x256" "512:256x256@2x" \
+              "512:512x512" "1024:512x512@2x"; do
+    SIZE="${SPEC%%:*}"; NAME="${SPEC##*:}"
+    sips -z "$SIZE" "$SIZE" "Icon.png" --out "${ICONSET}/icon_${NAME}.png" >/dev/null
+  done
+  iconutil -c icns "$ICONSET" -o "${APP_DIR}/Contents/Resources/AppIcon.icns"
+  cp "Icon.png" "${APP_DIR}/Contents/Resources/Icon.png"
+  rm -rf "$(dirname "$ICONSET")"
+  ICON_PLIST="    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>"
+  echo "  ✔ AppIcon.icns"
+fi
+
 cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -64,6 +85,7 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
     <string>14.0</string>
     <key>LSUIElement</key>
     <true/>
+${ICON_PLIST}
     <key>NSHumanReadableCopyright</key>
     <string>A tiny menu bar utility for your GitHub PRs.</string>
 </dict>

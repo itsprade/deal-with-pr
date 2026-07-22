@@ -12,6 +12,13 @@ struct DealWithPRApp: App {
             MenuBarLabel(count: delegate.store.reviewCount)
         }
         .menuBarExtraStyle(.window)
+
+        Window("Deal with PR — Settings", id: "settings") {
+            SettingsView(store: delegate.store)
+                .frame(width: 380, height: 460)
+        }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
     }
 }
 

@@ -15,6 +15,7 @@ struct ContentView: View {
     @Namespace private var rowNS
     @Namespace private var hoverNS
     @State private var hoveredID: PullRequest.ID?
+    @Environment(\.openWindow) private var openWindow
     @AppStorage("dwpr.themeIndex") private var themeIndex = 0
 
     private func setHover(_ id: PullRequest.ID, _ on: Bool) {
@@ -29,10 +30,9 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             content
-                .frame(maxHeight: .infinity)
-            footer   // always-visible bottom bar (theme, dev menu, Quit)
+            footer   // always-visible bottom bar
         }
-        .frame(width: 460, height: 660)
+        .frame(width: 460)
         .background {
             ZStack {
                 Rectangle().fill(.ultraThinMaterial)
@@ -52,25 +52,18 @@ struct ContentView: View {
         case .error(let error):
             ErrorStateView(error: error) { store.refresh() }
         default:
-            ZStack(alignment: .top) {
-                CoverAtmosphere(theme: theme)
-                    .frame(height: 430)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .allowsHitTesting(false)
-
-                VStack(spacing: 0) {
-                    CoverView(store: store, theme: theme)
-                    tabsBar
-                    listArea
-                        .id(tab)
-                        .transition(.asymmetric(
-                            insertion: .move(edge: slideForward ? .trailing : .leading),
-                            removal: .move(edge: slideForward ? .leading : .trailing)
-                        ))
-                        .clipped()
-                }
+            VStack(spacing: 0) {
+                CoverView(store: store, theme: theme)
+                tabsBar
+                listArea
+                    .id(tab)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: slideForward ? .trailing : .leading),
+                        removal: .move(edge: slideForward ? .leading : .trailing)
+                    ))
+                    .clipped()
             }
-            .frame(maxHeight: .infinity)
+            .background(CoverAtmosphere(theme: theme))
         }
     }
 
@@ -135,9 +128,9 @@ struct ContentView: View {
     @ViewBuilder
     private var listArea: some View {
         if currentList.isEmpty {
-            // Center the empty state in the full list area.
             EmptyStateView(tab: emptyKind)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity)
+                .frame(height: 200)
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: compact ? 0 : 2) {
@@ -163,8 +156,17 @@ struct ContentView: View {
                 .overlay(ThinScroller().allowsHitTesting(false))
             }
             .scrollIndicators(.visible)
-            .frame(maxHeight: .infinity)
+            // Expand to fit the content, capped at a max (then it scrolls).
+            .frame(height: min(estimatedListHeight, maxListHeight))
         }
+    }
+
+    private let maxListHeight: CGFloat = 460
+
+    /// Approximate height needed for the current list so the window hugs it.
+    private var estimatedListHeight: CGFloat {
+        let rowHeight: CGFloat = compact ? 30 : 84
+        return CGFloat(currentList.count) * rowHeight + 18
     }
 
     private var emptyKind: EmptyStateView.Kind {
@@ -181,6 +183,7 @@ struct ContentView: View {
         HStack(spacing: 12) {
             Text("\(store.reviewCount) awaiting review")
             Spacer()
+            // Quick theme cycle
             Circle()
                 .fill(LinearGradient(
                     colors: theme.cover,
@@ -195,7 +198,19 @@ struct ContentView: View {
                         themeIndex = (themeIndex + 1) % appThemes.count
                     }
                 }
-                .help("Theme: \(theme.name) — click to change")
+                .help("Theme: \(theme.name) — click to cycle")
+
+            Button {
+                openWindow(id: "settings")
+                NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.white.opacity(0.5))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Settings")
 
             Button("Quit") { NSApplication.shared.terminate(nil) }
                 .buttonStyle(.plain)
@@ -236,6 +251,194 @@ private struct ThinScroller: NSViewRepresentable {
 }
 
 // MARK: - Cover (green liquid-glass hero)
+
+// MARK: - Settings
+
+@MainActor
+struct SettingsView: View {
+    @Bindable var store: PRStore
+    @AppStorage("dwpr.themeIndex") private var themeIndex = 0
+    @State private var update: UpdateStatus = .idle
+
+    private let refreshOptions = [1, 2, 5, 15, 30, 60]
+
+    private let service = GitHubService()
+
+    private enum UpdateStatus: Equatable {
+        case idle, checking, upToDate, available(String), failed
+    }
+
+    private var currentVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header: mark, then title, then version — stacked & centered
+            VStack(spacing: 8) {
+                AppLogo(size: 40)
+                Text("Deal with PR Settings")
+                    .font(.system(size: 16, weight: .bold))
+                Text("v\(currentVersion)")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 2)
+
+            section("THEME") {
+                HStack(spacing: 10) {
+                    ForEach(appThemes) { t in
+                        Circle()
+                            .fill(LinearGradient(colors: t.cover, startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .frame(width: 24, height: 24)
+                            .overlay(
+                                Circle().strokeBorder(
+                                    themeIndex == t.id ? Color.accentColor : Color.primary.opacity(0.15),
+                                    lineWidth: themeIndex == t.id ? 2.5 : 1
+                                )
+                            )
+                            .contentShape(Circle())
+                            .onTapGesture {
+                                withAnimation(.easeInOut(duration: 0.25)) { themeIndex = t.id }
+                            }
+                            .help(t.name)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
+            section("GENERAL") {
+                VStack(spacing: 12) {
+                    settingRow("Merged total shows") {
+                        Picker("", selection: $store.statsRange) {
+                            ForEach(StatsRange.allCases, id: \.self) { range in
+                                Text(range.rawValue).tag(range)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    Divider()
+                    settingRow("Refresh every") {
+                        Picker("", selection: $store.refreshMinutes) {
+                            ForEach(refreshOptions, id: \.self) { m in
+                                Text(m < 60 ? "\(m) min" : "1 hour").tag(m)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                }
+            }
+
+            section("UPDATES") {
+                settingRow("App updates") {
+                    updateControl
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            credit
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(20)
+    }
+
+    /// A titled section: small-caps label above a rounded card.
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionLabel(title)
+            content()
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.primary.opacity(0.05))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+        }
+    }
+
+    private func settingRow<Control: View>(_ label: String, @ViewBuilder control: () -> Control) -> some View {
+        HStack {
+            Text(label).font(.system(size: 12))
+            Spacer()
+            control()
+        }
+    }
+
+    @ViewBuilder
+    private var updateControl: some View {
+        switch update {
+        case .idle:
+            Button("Check for Updates") { check() }
+                .controlSize(.small)
+        case .checking:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking…").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        case .upToDate:
+            Label("Up to date", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.green)
+        case .available(let version):
+            Button {
+                open("https://github.com/itsprade/deal-with-pr/releases/latest")
+            } label: {
+                Label("Update to \(version)", systemImage: "arrow.down.circle.fill")
+            }
+            .controlSize(.small)
+        case .failed:
+            Button("Retry") { check() }
+                .controlSize(.small)
+        }
+    }
+
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: .semibold))
+            .tracking(0.6)
+            .foregroundStyle(.secondary)
+    }
+
+    private var credit: some View {
+        (Text("Made by ").foregroundColor(.secondary) + Text("@itsprade").foregroundColor(.primary).bold())
+            .font(.system(size: 11.5))
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture { open("https://itsprade.com/") }
+            .help("itsprade.com")
+    }
+
+    private func check() {
+        update = .checking
+        Task {
+            guard let tag = await service.latestReleaseTag() else { update = .failed; return }
+            update = isNewer(tag, than: currentVersion) ? .available(tag) : .upToDate
+        }
+    }
+
+    private func open(_ urlString: String) {
+        if let url = URL(string: urlString) { NSWorkspace.shared.open(url) }
+    }
+
+    private func isNewer(_ latest: String, than current: String) -> Bool {
+        let l = latest.drop(while: { !$0.isNumber }).split(separator: ".").compactMap { Int($0) }
+        let c = current.split(separator: ".").compactMap { Int($0) }
+        for i in 0..<max(l.count, c.count) {
+            let lv = i < l.count ? l[i] : 0
+            let cv = i < c.count ? c[i] : 0
+            if lv != cv { return lv > cv }
+        }
+        return false
+    }
+}
 
 @MainActor
 private struct CoverView: View {
@@ -288,7 +491,7 @@ private struct CoverView: View {
                                 endPoint: .bottom
                             )
                         )
-                    Text("\(store.stats?.currentStreak ?? 0) days")
+                    Text("\(streakValue) \(streakValue == 1 ? "day" : "days")")
                         .font(.system(size: 38, weight: .bold))
                         .tracking(-1)
                         .foregroundStyle(.white)
@@ -329,15 +532,17 @@ private struct CoverView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var streakValue: Int { store.stats?.currentStreak ?? 0 }
+
     private var updatedText: String {
         guard let updated = store.lastUpdated else { return "Updating…" }
         return "Updated \(RelativeTime.string(from: updated))"
     }
 }
 
-/// The green liquid-glass backdrop for the hero. It runs taller than the hero
-/// content and fades to transparent — dissolving through the tabs and into the
-/// first list row so the gradient blends into the dark background.
+/// The liquid-glass backdrop. Used as the full background of the content area,
+/// so the themed gradient runs from a strong hero at the top all the way to the
+/// bottom of the window, easing down through many stops.
 private struct CoverAtmosphere: View {
     let theme: AppTheme
 
@@ -345,15 +550,16 @@ private struct CoverAtmosphere: View {
         ZStack {
             Rectangle().fill(.ultraThinMaterial)
             Color.black.opacity(0.15)   // tame the material glare so it isn't hot up top
-            // Mostly vertical so brightness is even left-to-right (no bright corner),
-            // with a gentle diagonal for depth.
+            // Many stops for a smooth, even vertical wash (no bright corner).
             LinearGradient(
                 stops: [
-                    .init(color: theme.cover[0], location: 0.0),
-                    .init(color: theme.cover[0], location: 0.14),
-                    .init(color: theme.cover[1], location: 0.45),
-                    .init(color: theme.cover[2], location: 0.78),
-                    .init(color: theme.cover[2], location: 1.0)
+                    .init(color: theme.cover[0], location: 0.00),
+                    .init(color: theme.cover[0], location: 0.10),
+                    .init(color: mix(theme.cover[0], theme.cover[1]), location: 0.28),
+                    .init(color: theme.cover[1], location: 0.44),
+                    .init(color: mix(theme.cover[1], theme.cover[2]), location: 0.62),
+                    .init(color: theme.cover[2], location: 0.82),
+                    .init(color: theme.cover[2], location: 1.00)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -367,20 +573,32 @@ private struct CoverAtmosphere: View {
             )
         }
         .mask(
-            // Longer, multi-stop fade so the gradient dissolves gently into the
-            // background instead of cutting off.
+            // Strong through the hero, then a long multi-stop fade that stays
+            // faintly present all the way to the bottom of the window.
             LinearGradient(
                 stops: [
-                    .init(color: .black, location: 0.0),
-                    .init(color: .black, location: 0.42),
-                    .init(color: .black.opacity(0.85), location: 0.58),
-                    .init(color: .black.opacity(0.5), location: 0.74),
-                    .init(color: .black.opacity(0.2), location: 0.9),
-                    .init(color: .clear, location: 1.0)
+                    .init(color: .black, location: 0.00),
+                    .init(color: .black, location: 0.34),
+                    .init(color: .black.opacity(0.82), location: 0.50),
+                    .init(color: .black.opacity(0.6), location: 0.64),
+                    .init(color: .black.opacity(0.4), location: 0.78),
+                    .init(color: .black.opacity(0.26), location: 0.90),
+                    .init(color: .black.opacity(0.15), location: 1.00)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
+        )
+    }
+
+    /// Midpoint blend of two colours for smoother gradient stops.
+    private func mix(_ a: Color, _ b: Color) -> Color {
+        let ca = NSColor(a).usingColorSpace(.sRGB) ?? .gray
+        let cb = NSColor(b).usingColorSpace(.sRGB) ?? .gray
+        return Color(
+            red: Double(ca.redComponent + cb.redComponent) / 2,
+            green: Double(ca.greenComponent + cb.greenComponent) / 2,
+            blue: Double(ca.blueComponent + cb.blueComponent) / 2
         )
     }
 }
@@ -440,30 +658,21 @@ private struct DetailRow: View {
                             .padding(.top, 4)
                             .matchedGeometryEffect(id: "dot-\(pr.id)", in: ns)
                         Text(pr.title)
-                            .font(.system(size: 12.5, weight: .medium))
+                            .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Color.white.opacity(0.95))
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
+                            .lineSpacing(1.5)
                             .fixedSize(horizontal: false, vertical: true)
                             .matchedGeometryEffect(id: "title-\(pr.id)", in: ns, properties: .position, anchor: .topLeading)
                     }
 
-                    // Metadata indented to line up under the title text
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(pr.repoShort) · \(pr.authorLogin ?? "you")")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.white.opacity(0.55))
-                            .lineLimit(1)
-
-                        HStack(spacing: 6) {
-                            StateTag(isDraft: pr.isDraft)
-                            if let decision = pr.reviewDecision {
-                                DecisionTag(decision: decision)
-                            }
-                        }
+                    // Status · repo · author — one line, uniform weight/size, • separated
+                    metadataLine
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                        .padding(.leading, 16)
                         .padding(.top, 3)
-                    }
-                    .padding(.leading, 16)
                 }
 
                 Spacer(minLength: 0)
@@ -497,6 +706,27 @@ private struct DetailRow: View {
     private func open() {
         guard let url = URL(string: pr.url) else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private func decisionColor(_ decision: ReviewDecision) -> Color {
+        switch decision {
+        case .approved:         return Color(hex: "5fe08a")
+        case .changesRequested: return Color(hex: "ffb570")
+        case .reviewRequired:   return Color(hex: "7cc0ff")
+        }
+    }
+
+    /// Status · repo · author as one styled line, separated by bullets.
+    private var metadataLine: Text {
+        let sep = Text("  •  ").foregroundColor(.white.opacity(0.25))
+        var line = Text(pr.isDraft ? "Draft" : "Open")
+            .foregroundColor(pr.isDraft ? .white.opacity(0.55) : Color(hex: "5fe08a"))
+        if let decision = pr.reviewDecision {
+            line = line + sep + Text(decision.label).foregroundColor(decisionColor(decision))
+        }
+        line = line + sep + Text(pr.repoShort).foregroundColor(.white.opacity(0.5))
+        line = line + sep + Text(pr.authorLogin ?? "you").foregroundColor(.white.opacity(0.5))
+        return line
     }
 }
 
@@ -589,50 +819,6 @@ private struct StatusDot: View {
     }
 }
 
-private struct StateTag: View {
-    let isDraft: Bool
-
-    var body: some View {
-        Text(isDraft ? "Draft" : "Open")
-            .font(.system(size: 10.5, weight: .medium))
-            .foregroundStyle(isDraft ? Color.white.opacity(0.7) : Color(hex: "5fe08a"))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                (isDraft ? Color.white.opacity(0.08) : Color(hex: "3fb950").opacity(0.15)),
-                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-            )
-    }
-}
-
-private struct DecisionTag: View {
-    let decision: ReviewDecision
-
-    var body: some View {
-        Text(label)
-            .font(.system(size: 10.5, weight: .medium))
-            .foregroundStyle(color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-    }
-
-    private var label: String {
-        switch decision {
-        case .approved:         return "Approved"
-        case .changesRequested: return "Changes"
-        case .reviewRequired:   return "In review"
-        }
-    }
-    private var color: Color {
-        switch decision {
-        case .approved:         return Color(hex: "5fe08a")
-        case .changesRequested: return Color(hex: "ffb570")
-        case .reviewRequired:   return Color(hex: "7cc0ff")
-        }
-    }
-}
-
 // MARK: - States
 
 private struct LoadingView: View {
@@ -643,7 +829,8 @@ private struct LoadingView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(Color.white.opacity(0.55))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+        .frame(height: 440)
     }
 }
 
@@ -732,7 +919,8 @@ private struct SetupStateView: View {
             }
             .buttonStyle(.plain)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+        .frame(height: 440)
         .padding(24)
     }
 
@@ -791,7 +979,8 @@ private struct ErrorStateView: View {
                 .controlSize(.small)
                 .padding(.top, 2)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+        .frame(height: 440)
         .padding(24)
     }
 }

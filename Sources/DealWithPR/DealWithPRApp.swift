@@ -131,10 +131,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         container.layer?.cornerCurve = .continuous
         container.layer?.masksToBounds = true
 
+        // NSGlassEffectView (Apple's Liquid Glass) is macOS 26 SDK-only, so we
+        // resolve it dynamically. This keeps the source compiling on the older
+        // SDK CI uses, while still rendering real glass at runtime on macOS 26.
         let backdrop: NSView
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView(frame: container.bounds)
-            glass.cornerRadius = 0   // the container does the clipping
+        if #available(macOS 26.0, *),
+           let glassClass = NSClassFromString("NSGlassEffectView") as? NSView.Type {
+            let glass = glassClass.init(frame: container.bounds)
+            glass.setValue(CGFloat(0), forKey: "cornerRadius")   // container does the clipping
             backdrop = glass
         } else {
             let effect = NSVisualEffectView(frame: container.bounds)

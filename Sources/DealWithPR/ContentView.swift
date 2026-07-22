@@ -40,6 +40,8 @@ struct ContentView: View {
                 Color.black.opacity(0.28)   // light scrim — keep the liquid-glass translucency
             }
         }
+        // Clip the whole popover so all four corners round consistently.
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .task { store.refresh() }
     }
 

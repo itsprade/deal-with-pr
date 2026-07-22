@@ -16,7 +16,6 @@ struct ContentView: View {
     @Namespace private var rowNS
     @Namespace private var hoverNS
     @State private var hoveredID: PullRequest.ID?
-    @Environment(\.openWindow) private var openWindow
     @AppStorage("dwpr.themeIndex") private var themeIndex = 0
 
     private func setHover(_ id: PullRequest.ID, _ on: Bool) {
@@ -35,10 +34,16 @@ struct ContentView: View {
         }
         .frame(width: 460)
         .background {
-            ZStack {
-                Rectangle().fill(.ultraThinMaterial)
-                Color.black.opacity(0.28)   // light scrim — keep the liquid-glass translucency
-            }
+            // The glass itself is the panel's NSGlassEffectView behind this view.
+            // Only a very light, bottom-weighted tint here so list/footer text
+            // stays readable over the glass without killing the transparency.
+            // Clipped to the glass radius so the tint doesn't square off the corners.
+            LinearGradient(
+                colors: [Color.black.opacity(0.0), Color.black.opacity(0.03)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .clipShape(RoundedRectangle(cornerRadius: popoverCornerRadius, style: .continuous))
         }
         .task { store.refresh() }
     }
@@ -159,6 +164,7 @@ struct ContentView: View {
                 .padding(.bottom, 12)
                 .overlay(ThinScroller().allowsHitTesting(false))
             }
+            .scrollContentBackground(.hidden)   // let the panel's glass show through
             .scrollIndicators(.visible)
             .frame(height: listHeight)
         }
@@ -196,12 +202,11 @@ struct ContentView: View {
                 .help("Theme: \(theme.name) — click to cycle")
 
             Button {
-                openWindow(id: "settings")
-                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(name: .dwprOpenSettings, object: nil)
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 12))
-                    .foregroundStyle(Color.white.opacity(0.5))
+                    .foregroundStyle(Color.white.opacity(0.8))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -212,7 +217,7 @@ struct ContentView: View {
                 .help("Quit Deal with PR")
         }
         .font(.system(size: 12))
-        .foregroundStyle(Color.white.opacity(0.5))
+        .foregroundStyle(Color.white.opacity(0.8))
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .overlay(alignment: .top) {
@@ -519,17 +524,17 @@ private struct CoverAtmosphere: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(.ultraThinMaterial)
-            Color.black.opacity(0.15)   // tame the material glare so it isn't hot up top
-            // Many stops for a smooth, even vertical wash (no bright corner).
+            // No material here — the window's behind-window glass shows through.
+            // Just the themed colour wash for the hero, fading into the glass.
+            // Colour stops are compressed into the hero region so the full
+            // gradient spreads evenly across the top (not single-colour up top).
             LinearGradient(
                 stops: [
                     .init(color: theme.cover[0], location: 0.00),
-                    .init(color: theme.cover[0], location: 0.10),
-                    .init(color: mix(theme.cover[0], theme.cover[1]), location: 0.28),
-                    .init(color: theme.cover[1], location: 0.44),
-                    .init(color: mix(theme.cover[1], theme.cover[2]), location: 0.62),
-                    .init(color: theme.cover[2], location: 0.82),
+                    .init(color: mix(theme.cover[0], theme.cover[1]), location: 0.14),
+                    .init(color: theme.cover[1], location: 0.28),
+                    .init(color: mix(theme.cover[1], theme.cover[2]), location: 0.42),
+                    .init(color: theme.cover[2], location: 0.55),
                     .init(color: theme.cover[2], location: 1.00)
                 ],
                 startPoint: .top,
@@ -544,17 +549,18 @@ private struct CoverAtmosphere: View {
             )
         }
         .mask(
-            // Strong through the hero, then a long multi-stop fade that stays
-            // faintly present all the way to the bottom of the window.
+            // Full colour through the hero, then a long, progressive alpha ramp
+            // so the wash dissolves smoothly into the behind-window glass instead
+            // of ending on a hard edge.
             LinearGradient(
                 stops: [
                     .init(color: .black, location: 0.00),
-                    .init(color: .black, location: 0.34),
-                    .init(color: .black.opacity(0.82), location: 0.50),
-                    .init(color: .black.opacity(0.6), location: 0.64),
-                    .init(color: .black.opacity(0.4), location: 0.78),
-                    .init(color: .black.opacity(0.26), location: 0.90),
-                    .init(color: .black.opacity(0.15), location: 1.00)
+                    .init(color: .black, location: 0.30),
+                    .init(color: .black.opacity(0.85), location: 0.42),
+                    .init(color: .black.opacity(0.55), location: 0.52),
+                    .init(color: .black.opacity(0.30), location: 0.62),
+                    .init(color: .black.opacity(0.12), location: 0.72),
+                    .init(color: .clear, location: 0.82)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -1024,3 +1030,10 @@ private extension Color {
         )
     }
 }
+
+// MARK: - Popover geometry
+
+/// Shared corner radius for the popover, used by the SwiftUI content clip and by
+/// the host `NSGlassEffectView`/panel (see PopoverPanel) so the two agree. The
+/// glass and transparency now come from the panel we own, not from MenuBarExtra.
+let popoverCornerRadius: CGFloat = 24

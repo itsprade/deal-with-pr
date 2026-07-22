@@ -74,12 +74,9 @@ final class PRStore {
 
     // MARK: - Derived views for the UI
 
-    /// Your PRs with drafts on top, each group most-recently-updated first.
+    /// Your PRs, most-recently-updated first (no draft grouping).
     var myPRsSorted: [PullRequest] {
-        myPRs.sorted { a, b in
-            if a.isDraft != b.isDraft { return a.isDraft && !b.isDraft }
-            return a.updatedAt > b.updatedAt
-        }
+        myPRs.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     var humanReviews: [PullRequest] {

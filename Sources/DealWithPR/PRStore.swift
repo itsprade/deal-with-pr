@@ -72,7 +72,7 @@ final class PRStore {
         Task { await requestNotificationAuthorization() }
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            MainActor.assumeIsolated { self?.refresh() }
         }
     }
 

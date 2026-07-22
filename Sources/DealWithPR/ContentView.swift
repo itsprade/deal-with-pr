@@ -4,6 +4,7 @@ import AppKit
 // Layout "3a": one card — green liquid-glass cover (streak + heatmap + pills),
 // then segmented tabs (Your PRs / People / Deps) + density toggle, then the list.
 
+@MainActor
 struct ContentView: View {
     @Bindable var store: PRStore
 
@@ -236,6 +237,7 @@ private struct ThinScroller: NSViewRepresentable {
 
 // MARK: - Cover (green liquid-glass hero)
 
+@MainActor
 private struct CoverView: View {
     let store: PRStore
     let theme: AppTheme

@@ -66,7 +66,8 @@ status, the contribution calendar, and merged-PR counts:
 - `search(query: "is:open is:pr review-requested:@me")` → review requests
 - `viewer.contributionsCollection` → streak + contribution graph
 
-Built with SwiftUI's `MenuBarExtra`. No third-party dependencies. Source is under
+Built with SwiftUI's `MenuBarExtra`, and [Sparkle](https://sparkle-project.org) for
+auto-updates. Source is under
 [`Sources/DealWithPR/`](Sources/DealWithPR/).
 
 ## Security & privacy
@@ -77,15 +78,10 @@ Built with SwiftUI's `MenuBarExtra`. No third-party dependencies. Source is unde
   zero connections itself.
 - **No data at rest.** PR data lives in memory only; the sole thing persisted is your theme
   choice. No caching, no logs of sensitive data, **no analytics or telemetry**.
-- **No dependencies.** Pure SwiftUI + the system `gh` — nothing to compromise via a supply
-  chain.
+- **Minimal dependencies.** Pure SwiftUI + the system `gh`, plus Sparkle for signed,
+  verified auto-updates.
 - **Read-only.** It shows and opens PRs. It never merges, comments, or modifies anything.
 
-## Contributing
+---
 
-Issues and PRs are welcome. Please keep the app small and focused — it's meant to stay a
-tiny, read-only utility. Match the existing SwiftUI patterns in `Sources/DealWithPR/`.
-
-## License
-
-[MIT](LICENSE) © 2026 Pradeep
+Free to use. © 2026 Pradeep ([itsprade.com](https://itsprade.com/)). All rights reserved.

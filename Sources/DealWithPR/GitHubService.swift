@@ -130,28 +130,6 @@ struct GitHubService: Sendable {
         return f.string(from: date)
     }
 
-    /// The latest published release tag (e.g. "v1.0.1"), or nil if unavailable.
-    func latestReleaseTag() async -> String? {
-        await Task.detached(priority: .utility) { Self.fetchLatestTag() }.value
-    }
-
-    private static func fetchLatestTag() -> String? {
-        guard let gh = locateGH() else { return nil }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: gh)
-        process.arguments = ["api", "repos/itsprade/deal-with-pr/releases/latest", "--jq", ".tag_name"]
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = Pipe()
-        do { try process.run() } catch { return nil }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        let tag = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (tag?.isEmpty ?? true) ? nil : tag
-    }
-
     /// Current streak = consecutive most-recent days with ≥1 contribution.
     /// Today is ignored if it has 0 so far, matching GitHub's behaviour of not
     /// breaking the streak until the day is actually over.

@@ -41,6 +41,18 @@ mkdir -p "${APP_DIR}/Contents/Resources"
 
 cp "$BIN_PATH" "${APP_DIR}/Contents/MacOS/${EXECUTABLE}"
 
+echo "▶ Embedding Sparkle.framework…"
+FRAMEWORK_SRC="$(swift build -c release --show-bin-path)/Sparkle.framework"
+if [ ! -d "$FRAMEWORK_SRC" ]; then
+  echo "✖ Sparkle.framework not found at $FRAMEWORK_SRC" >&2
+  exit 1
+fi
+mkdir -p "${APP_DIR}/Contents/Frameworks"
+cp -R "$FRAMEWORK_SRC" "${APP_DIR}/Contents/Frameworks/"
+# Ensure the bundled binary can find embedded frameworks.
+install_name_tool -add_rpath "@executable_path/../Frameworks" \
+  "${APP_DIR}/Contents/MacOS/${EXECUTABLE}" 2>/dev/null || true
+
 ICON_PLIST=""
 if [ -f "Icon.png" ]; then
   echo "▶ Generating app icon…"
@@ -88,17 +100,32 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 ${ICON_PLIST}
     <key>NSHumanReadableCopyright</key>
     <string>A tiny menu bar utility for your GitHub PRs.</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/itsprade/deal-with-pr/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>cKxi6YJVIz3yBusZhb6BvTrd277L8+J8qjjliC3eOf0=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
 </dict>
 </plist>
 PLIST
 
+FRAMEWORK="${APP_DIR}/Contents/Frameworks/Sparkle.framework"
 if [ "$CODESIGN_IDENTITY" = "-" ]; then
   echo "▶ Ad-hoc code signing…"
-  codesign --force --deep --sign - "$APP_DIR"
+  # Sign nested framework (and its helpers) first, then the app.
+  codesign --force --deep --sign - "$FRAMEWORK"
+  codesign --force --sign - "${APP_DIR}/Contents/MacOS/${EXECUTABLE}"
+  codesign --force --sign - "$APP_DIR"
 else
   echo "▶ Code signing with hardened runtime: ${CODESIGN_IDENTITY}…"
-  codesign --force --deep --options runtime --timestamp \
-    --sign "$CODESIGN_IDENTITY" "$APP_DIR"
+  RUNTIME_OPTS=(--options runtime --timestamp --sign "$CODESIGN_IDENTITY")
+  # Framework helpers (XPC services, Updater.app, Autoupdate) — sign deep first.
+  codesign --force --deep "${RUNTIME_OPTS[@]}" "$FRAMEWORK"
+  codesign --force "${RUNTIME_OPTS[@]}" "${APP_DIR}/Contents/MacOS/${EXECUTABLE}"
+  codesign --force "${RUNTIME_OPTS[@]}" "$APP_DIR"
   codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 fi
 

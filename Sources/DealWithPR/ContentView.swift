@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Sparkle
 
 // Layout "3a": one card — green liquid-glass cover (streak + heatmap + pills),
 // then segmented tabs (Your PRs / People / Deps) + density toggle, then the list.
@@ -36,7 +37,7 @@ struct ContentView: View {
         .background {
             ZStack {
                 Rectangle().fill(.ultraThinMaterial)
-                Color.black.opacity(0.5)   // scrim: darker glass, softer edge
+                Color.black.opacity(0.28)   // light scrim — keep the liquid-glass translucency
             }
         }
         .task { store.refresh() }
@@ -125,12 +126,15 @@ struct ContentView: View {
 
     // MARK: - List
 
+    // Stable height so switching tabs never resizes the window (no jump).
+    private let listHeight: CGFloat = 348
+
     @ViewBuilder
     private var listArea: some View {
         if currentList.isEmpty {
             EmptyStateView(tab: emptyKind)
                 .frame(maxWidth: .infinity)
-                .frame(height: 200)
+                .frame(height: listHeight)
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: compact ? 0 : 2) {
@@ -156,17 +160,8 @@ struct ContentView: View {
                 .overlay(ThinScroller().allowsHitTesting(false))
             }
             .scrollIndicators(.visible)
-            // Expand to fit the content, capped at a max (then it scrolls).
-            .frame(height: min(estimatedListHeight, maxListHeight))
+            .frame(height: listHeight)
         }
-    }
-
-    private let maxListHeight: CGFloat = 460
-
-    /// Approximate height needed for the current list so the window hugs it.
-    private var estimatedListHeight: CGFloat {
-        let rowHeight: CGFloat = compact ? 30 : 84
-        return CGFloat(currentList.count) * rowHeight + 18
     }
 
     private var emptyKind: EmptyStateView.Kind {
@@ -257,16 +252,10 @@ private struct ThinScroller: NSViewRepresentable {
 @MainActor
 struct SettingsView: View {
     @Bindable var store: PRStore
+    let updater: SPUUpdater
     @AppStorage("dwpr.themeIndex") private var themeIndex = 0
-    @State private var update: UpdateStatus = .idle
 
     private let refreshOptions = [1, 2, 5, 15, 30, 60]
-
-    private let service = GitHubService()
-
-    private enum UpdateStatus: Equatable {
-        case idle, checking, upToDate, available(String), failed
-    }
 
     private var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
@@ -288,24 +277,9 @@ struct SettingsView: View {
 
             section("THEME") {
                 HStack(spacing: 10) {
-                    ForEach(appThemes) { t in
-                        Circle()
-                            .fill(LinearGradient(colors: t.cover, startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .frame(width: 24, height: 24)
-                            .overlay(
-                                Circle().strokeBorder(
-                                    themeIndex == t.id ? Color.accentColor : Color.primary.opacity(0.15),
-                                    lineWidth: themeIndex == t.id ? 2.5 : 1
-                                )
-                            )
-                            .contentShape(Circle())
-                            .onTapGesture {
-                                withAnimation(.easeInOut(duration: 0.25)) { themeIndex = t.id }
-                            }
-                            .help(t.name)
-                    }
-                    Spacer(minLength: 0)
+                    ForEach(appThemes) { swatch($0) }
                 }
+                .frame(maxWidth: .infinity)
             }
 
             section("GENERAL") {
@@ -332,17 +306,33 @@ struct SettingsView: View {
                 }
             }
 
-            section("UPDATES") {
-                settingRow("App updates") {
-                    updateControl
+            section("NOTIFICATIONS") {
+                VStack(spacing: 11) {
+                    toggleRow("Enable notifications", $store.notificationsEnabled)
+                    Divider()
+                    toggleRow("Review requested", $store.notifyReviewRequested)
+                        .disabled(!store.notificationsEnabled)
+                        .opacity(store.notificationsEnabled ? 1 : 0.3)
+                    toggleRow("PR approved", $store.notifyApproved)
+                        .disabled(!store.notificationsEnabled)
+                        .opacity(store.notificationsEnabled ? 1 : 0.3)
+                    toggleRow("Changes requested", $store.notifyChangesRequested)
+                        .disabled(!store.notificationsEnabled)
+                        .opacity(store.notificationsEnabled ? 1 : 0.3)
                 }
             }
 
-            Spacer(minLength: 8)
+            section("UPDATES") {
+                settingRow("App updates") {
+                    Button("Check for Updates") { updater.checkForUpdates() }
+                        .controlSize(.small)
+                }
+            }
 
             credit
+                .padding(.top, 4)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(20)
     }
 
@@ -372,30 +362,29 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder
-    private var updateControl: some View {
-        switch update {
-        case .idle:
-            Button("Check for Updates") { check() }
-                .controlSize(.small)
-        case .checking:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Checking…").font(.system(size: 11)).foregroundStyle(.secondary)
+    private func swatch(_ t: AppTheme) -> some View {
+        Circle()
+            .fill(LinearGradient(colors: [t.heat[0], t.cover[0]], startPoint: .topLeading, endPoint: .bottomTrailing))
+            .frame(width: 16, height: 16)
+            .overlay {
+                if themeIndex == t.id {
+                    Circle().stroke(Color.white, lineWidth: 2).padding(-3)
+                }
             }
-        case .upToDate:
-            Label("Up to date", systemImage: "checkmark.circle.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(.green)
-        case .available(let version):
-            Button {
-                open("https://github.com/itsprade/deal-with-pr/releases/latest")
-            } label: {
-                Label("Update to \(version)", systemImage: "arrow.down.circle.fill")
+            .contentShape(Circle())
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.25)) { themeIndex = t.id }
             }
-            .controlSize(.small)
-        case .failed:
-            Button("Retry") { check() }
+            .help(t.name)
+    }
+
+    private func toggleRow(_ label: String, _ isOn: Binding<Bool>) -> some View {
+        HStack {
+            Text(label).font(.system(size: 12))
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
                 .controlSize(.small)
         }
     }
@@ -414,29 +403,11 @@ struct SettingsView: View {
             .contentShape(Rectangle())
             .onTapGesture { open("https://itsprade.com/") }
             .help("itsprade.com")
-    }
-
-    private func check() {
-        update = .checking
-        Task {
-            guard let tag = await service.latestReleaseTag() else { update = .failed; return }
-            update = isNewer(tag, than: currentVersion) ? .available(tag) : .upToDate
-        }
+            .padding(.bottom, 8)
     }
 
     private func open(_ urlString: String) {
         if let url = URL(string: urlString) { NSWorkspace.shared.open(url) }
-    }
-
-    private func isNewer(_ latest: String, than current: String) -> Bool {
-        let l = latest.drop(while: { !$0.isNumber }).split(separator: ".").compactMap { Int($0) }
-        let c = current.split(separator: ".").compactMap { Int($0) }
-        for i in 0..<max(l.count, c.count) {
-            let lv = i < l.count ? l[i] : 0
-            let cv = i < c.count ? c[i] : 0
-            if lv != cv { return lv > cv }
-        }
-        return false
     }
 }
 
@@ -457,10 +428,10 @@ private struct CoverView: View {
                     Button {
                         store.refresh()
                     } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 10, weight: .semibold))
-                            .frame(width: 14, height: 14)
-                            .rotationEffect(.degrees(spinning ? 360 : 0))
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 12))
+                            .frame(width: 16, height: 16)
+                            .rotationEffect(.degrees(spinning ? 360 : 0), anchor: .center)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)

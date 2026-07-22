@@ -56,6 +56,9 @@ jobs:
           CODESIGN_IDENTITY: ${{ steps.signing.outputs.enabled == 'true' && secrets.MACOS_SIGN_IDENTITY || '-' }}
         run: sh build-app.sh
 
+      - name: Install create-dmg
+        run: brew install create-dmg
+
       - name: Create DMG
         run: sh make-dmg.sh
 
@@ -76,9 +79,28 @@ jobs:
           xcrun stapler staple "Deal-with-PR.dmg"
           xcrun stapler validate "Deal-with-PR.dmg"
 
+      - name: Generate Sparkle appcast
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          SPARKLE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          SPARKLE_VER=2.6.4
+          curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VER}/Sparkle-${SPARKLE_VER}.tar.xz" -o "$RUNNER_TEMP/sparkle.tar.xz"
+          mkdir -p "$RUNNER_TEMP/sparkle" && tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+          printf '%s' "$SPARKLE_KEY" > "$RUNNER_TEMP/sparkle_key"
+          mkdir -p "$RUNNER_TEMP/updates" && cp "Deal-with-PR.dmg" "$RUNNER_TEMP/updates/"
+          "$RUNNER_TEMP/sparkle/bin/generate_appcast" \
+            --ed-key-file "$RUNNER_TEMP/sparkle_key" \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
+            "$RUNNER_TEMP/updates"
+          cp "$RUNNER_TEMP/updates/appcast.xml" appcast.xml
+          rm -f "$RUNNER_TEMP/sparkle_key"
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Deal-with-PR.dmg
+          files: |
+            Deal-with-PR.dmg
+            appcast.xml
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false

@@ -49,11 +49,27 @@ final class PRStore {
         }
     }
 
+    // Notification preferences (default on; persisted)
+    var notificationsEnabled: Bool = (UserDefaults.standard.object(forKey: "dwpr.notif.enabled") as? Bool) ?? true {
+        didSet { UserDefaults.standard.set(notificationsEnabled, forKey: "dwpr.notif.enabled") }
+    }
+    var notifyReviewRequested: Bool = (UserDefaults.standard.object(forKey: "dwpr.notif.review") as? Bool) ?? true {
+        didSet { UserDefaults.standard.set(notifyReviewRequested, forKey: "dwpr.notif.review") }
+    }
+    var notifyApproved: Bool = (UserDefaults.standard.object(forKey: "dwpr.notif.approved") as? Bool) ?? true {
+        didSet { UserDefaults.standard.set(notifyApproved, forKey: "dwpr.notif.approved") }
+    }
+    var notifyChangesRequested: Bool = (UserDefaults.standard.object(forKey: "dwpr.notif.changes") as? Bool) ?? true {
+        didSet { UserDefaults.standard.set(notifyChangesRequested, forKey: "dwpr.notif.changes") }
+    }
+
     // Private plumbing
     private let service = GitHubService()
     private var timer: Timer?
     private var knownReviewURLs: Set<String> = []
     private var hasBaseline = false
+    private var knownMyDecisions: [String: String] = [:]
+    private var hasMyBaseline = false
     private(set) var isRefreshing = false
 
     // MARK: - Derived views for the UI
@@ -111,6 +127,7 @@ final class PRStore {
                 lastUpdated = Date()
                 loadState = .loaded
                 detectNewReviewRequests()
+                detectMyPRUpdates()
             } catch let error as GitHubError {
                 loadState = .error(error)
             } catch {
@@ -142,28 +159,59 @@ final class PRStore {
         knownReviewURLs = currentURLs
 
         guard !newURLs.isEmpty else { return }
+        guard notificationsEnabled, notifyReviewRequested else { return }
         let newPRs = humanReviews.filter { newURLs.contains($0.url) }
         sendNotification(for: newPRs)
     }
 
     private func sendNotification(for prs: [PullRequest]) {
         guard !prs.isEmpty else { return }
-        let content = UNMutableNotificationContent()
-
         if prs.count == 1, let pr = prs.first {
-            content.title = "New review request"
-            content.body = "\(pr.repoShort) #\(pr.number) · \(pr.title)"
+            postNotification(title: "New review request",
+                             body: "\(pr.repoShort) #\(pr.number) · \(pr.title)",
+                             url: pr.url)
         } else {
-            content.title = "\(prs.count) new review requests"
-            content.body = prs.prefix(3).map { "\($0.repoShort) #\($0.number)" }.joined(separator: ", ")
+            postNotification(title: "\(prs.count) new review requests",
+                             body: prs.prefix(3).map { "\($0.repoShort) #\($0.number)" }.joined(separator: ", "),
+                             url: "https://github.com/pulls/review-requested")
         }
-        content.sound = .default
+    }
 
-        let request = UNNotificationRequest(
-            identifier: UUID().uuidString,
-            content: content,
-            trigger: nil
-        )
+    /// Notify when one of *your* PRs changes to approved or changes-requested.
+    private func detectMyPRUpdates() {
+        var current: [String: String] = [:]
+        for pr in myPRs { current[pr.url] = pr.reviewDecision?.rawValue ?? "none" }
+        defer { knownMyDecisions = current }
+
+        guard hasMyBaseline else { hasMyBaseline = true; return }
+        guard notificationsEnabled else { return }
+
+        for pr in myPRs {
+            guard let old = knownMyDecisions[pr.url] else { continue }   // newly seen — skip
+            let new = pr.reviewDecision?.rawValue ?? "none"
+            guard old != new else { continue }
+            switch pr.reviewDecision {
+            case .approved where notifyApproved:
+                postNotification(title: "Pull request approved ✅",
+                                 body: "\(pr.repoShort) #\(pr.number) · \(pr.title)",
+                                 url: pr.url)
+            case .changesRequested where notifyChangesRequested:
+                postNotification(title: "Changes requested",
+                                 body: "\(pr.repoShort) #\(pr.number) · \(pr.title)",
+                                 url: pr.url)
+            default:
+                break
+            }
+        }
+    }
+
+    private func postNotification(title: String, body: String, url: String? = nil) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        if let url { content.userInfo = ["url": url] }
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
 }

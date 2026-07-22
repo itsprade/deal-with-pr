@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import UserNotifications
+import Sparkle
 
 @main
 struct DealWithPRApp: App {
@@ -14,22 +16,48 @@ struct DealWithPRApp: App {
         .menuBarExtraStyle(.window)
 
         Window("Deal with PR — Settings", id: "settings") {
-            SettingsView(store: delegate.store)
-                .frame(width: 380, height: 460)
+            SettingsView(store: delegate.store, updater: delegate.updaterController.updater)
+                .frame(width: 380)
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
     }
 }
 
-/// Owns the store, starts polling at launch, and hides the Dock icon.
+/// Owns the store, starts polling at launch, hides the Dock icon, and opens the
+/// relevant PR when a notification is clicked.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     let store = PRStore()
+    // Sparkle auto-updater (checks the appcast, downloads, installs, relaunches).
+    let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        UNUserNotificationCenter.current().delegate = self
         store.start()
+    }
+
+    // Show banners even while the app is active.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .list])
+    }
+
+    // Open the PR in the browser when a notification is clicked.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        if let urlString = response.notification.request.content.userInfo["url"] as? String,
+           let url = URL(string: urlString) {
+            DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+        }
+        completionHandler()
     }
 }
 

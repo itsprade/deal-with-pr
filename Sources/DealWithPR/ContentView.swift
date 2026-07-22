@@ -244,14 +244,9 @@ private struct CoverView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                HStack(spacing: 9) {
-                    Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color(hex: "bfe8cd"))
-                    Text("Deal with PR")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
+                Text("Deal with PR")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
                 Spacer()
                 HStack(spacing: 5) {
                     Button {

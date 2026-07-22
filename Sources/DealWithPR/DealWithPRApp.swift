@@ -26,13 +26,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// The menu-bar label: an SF Symbol with the review count beside it when > 0.
+/// The menu-bar label: the app logo with the review count beside it when > 0.
+/// The logo is rendered to an NSImage because MenuBarExtra only reliably draws
+/// Text/Image in the status bar (custom SwiftUI shapes get dropped).
 private struct MenuBarLabel: View {
     let count: Int
 
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "arrow.triangle.pull")
+        let renderer = ImageRenderer(content: AppLogo(size: 16))
+        renderer.scale = 2
+        let logo = renderer.nsImage
+
+        return HStack(spacing: 4) {
+            if let logo {
+                Image(nsImage: logo)
+            } else {
+                AppLogo(size: 16)
+            }
             if count > 0 {
                 Text("\(count)")
                     .font(.system(size: 12, weight: .semibold))

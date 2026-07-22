@@ -1,7 +1,17 @@
 #!/bin/bash
 #
 # Builds "Deal with PR.app" from the SwiftPM executable.
-# Usage:  sh build-app.sh
+#
+# Usage:
+#   sh build-app.sh                 # ad-hoc signed (local dev)
+#   MARKETING_VERSION=1.0.0 BUILD_NUMBER=12 \
+#   CODESIGN_IDENTITY="Developer ID Application: Name (TEAMID)" sh build-app.sh
+#
+# Env vars:
+#   CODESIGN_IDENTITY  signing identity (default "-" = ad-hoc). A real Developer ID
+#                      identity also enables the hardened runtime (needed to notarize).
+#   MARKETING_VERSION  CFBundleShortVersionString (default 1.0.0)
+#   BUILD_NUMBER       CFBundleVersion (default 1)
 #
 set -euo pipefail
 
@@ -11,6 +21,9 @@ APP_NAME="Deal with PR"
 BUNDLE_ID="tech.tailor.dealwithpr"
 EXECUTABLE="DealWithPR"
 APP_DIR="${APP_NAME}.app"
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+MARKETING_VERSION="${MARKETING_VERSION:-1.0.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
 
 echo "▶ Building release binary…"
 swift build -c release
@@ -42,9 +55,9 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${BUILD_NUMBER}</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>${MARKETING_VERSION}</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
@@ -57,8 +70,15 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "▶ Ad-hoc code signing…"
-codesign --force --deep --sign - "$APP_DIR"
+if [ "$CODESIGN_IDENTITY" = "-" ]; then
+  echo "▶ Ad-hoc code signing…"
+  codesign --force --deep --sign - "$APP_DIR"
+else
+  echo "▶ Code signing with hardened runtime: ${CODESIGN_IDENTITY}…"
+  codesign --force --deep --options runtime --timestamp \
+    --sign "$CODESIGN_IDENTITY" "$APP_DIR"
+  codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+fi
 
 echo "✔ Built ${APP_DIR}"
 echo "  Run it with:  open \"${APP_DIR}\""

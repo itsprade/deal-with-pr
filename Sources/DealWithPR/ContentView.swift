@@ -11,12 +11,14 @@ struct ContentView: View {
 
     private enum MainTab: Int { case yours, people, deps }
     @State private var tab: MainTab = .yours
-    @State private var compact = false
     @State private var slideForward = true
     @Namespace private var rowNS
     @Namespace private var hoverNS
     @State private var hoveredID: PullRequest.ID?
     @AppStorage("dwpr.themeIndex") private var themeIndex = 0
+    // Shared with the footer toggle and Settings.
+    @AppStorage("dwpr.compact") private var compact = false
+    @AppStorage("dwpr.showStreak") private var showStreak = true
 
     private func setHover(_ id: PullRequest.ID, _ on: Bool) {
         withAnimation(.snappy(duration: 0.13)) {
@@ -59,7 +61,7 @@ struct ContentView: View {
             ErrorStateView(error: error) { store.refresh() }
         default:
             VStack(spacing: 0) {
-                CoverView(store: store, theme: theme)
+                CoverView(store: store, theme: theme, showStreak: showStreak)
                 tabsBar
                 listArea
                     .id(tab)
@@ -69,7 +71,11 @@ struct ContentView: View {
                     ))
                     .clipped()
             }
-            .background(CoverAtmosphere(theme: theme))
+            // Colored hero wash only when the streak section is shown; otherwise
+            // the header sits on plain glass.
+            .background {
+                if showStreak { CoverAtmosphere(theme: theme) }
+            }
         }
     }
 
@@ -86,52 +92,61 @@ struct ContentView: View {
     // MARK: - Tabs + density
 
     private var tabsBar: some View {
-        HStack(spacing: 18) {
-            tabButton("Your PRs", store.myPRs.count, .yours)
-            tabButton("People", store.humanReviews.count, .people)
-            tabButton("Deps", store.botReviews.count, .deps)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("PR that needs your attention")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.4))
+                .padding(.leading, 2)
 
-            Spacer(minLength: 8)
-
-            Button {
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) { compact.toggle() }
-            } label: {
-                Image(systemName: compact ? "rectangle.grid.1x2" : "line.3.horizontal")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.6))
-                    .frame(width: 26, height: 24)
-                    .contentShape(Rectangle())
+            HStack(alignment: .top, spacing: 10) {
+                statCard("Your PR's", store.myPRsSorted.count, .yours)
+                statCard("From People", store.humanReviews.count, .people)
+                statCard("From Bots", store.botReviews.count, .deps)
             }
-            .buttonStyle(.plain)
-            .help("Toggle compact / detailed rows")
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
-        .padding(.bottom, 4)
+        .padding(.bottom, 6)
     }
 
-    private func tabButton(_ label: String, _ count: Int, _ value: MainTab) -> some View {
+    /// Stat card that doubles as the tab selector: big count + label, with a
+    /// highlighted border/fill when active.
+    private func statCard(_ label: String, _ count: Int, _ value: MainTab) -> some View {
         let active = tab == value
         return Button {
             slideForward = value.rawValue >= tab.rawValue
             withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) { tab = value }
         } label: {
-            HStack(spacing: 5) {
-                Text(label)
+            VStack(alignment: .leading, spacing: 1) {
                 Text("\(count)")
-                    .opacity(active ? 0.7 : 1)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .contentTransition(.numericText())
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(active ? 0.75 : 0.45))
             }
-            .font(.system(size: 12.5, weight: active ? .semibold : .medium))
-            .foregroundStyle(active ? Color.white : Color.white.opacity(0.4))
-            .contentShape(Rectangle())
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(active ? 0.10 : 0.04))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.white.opacity(active ? 0.35 : 0.12), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.15), value: active)
+        .animation(.easeInOut(duration: 0.18), value: active)
     }
 
     // MARK: - List
 
-    // Stable height so switching tabs never resizes the window (no jump).
+    // Preferred list height; shrinks (and scrolls) when the panel is height-
+    // capped on a short screen, so the footer is never clipped.
     private let listHeight: CGFloat = 348
 
     @ViewBuilder
@@ -139,7 +154,7 @@ struct ContentView: View {
         if currentList.isEmpty {
             EmptyStateView(tab: emptyKind)
                 .frame(maxWidth: .infinity)
-                .frame(height: listHeight)
+                .frame(minHeight: 140, idealHeight: listHeight, maxHeight: listHeight)
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: compact ? 0 : 2) {
@@ -166,7 +181,7 @@ struct ContentView: View {
             }
             .scrollContentBackground(.hidden)   // let the panel's glass show through
             .scrollIndicators(.visible)
-            .frame(height: listHeight)
+            .frame(minHeight: 140, idealHeight: listHeight, maxHeight: listHeight)
         }
     }
 
@@ -184,6 +199,18 @@ struct ContentView: View {
         HStack(spacing: 12) {
             Text("\(store.reviewCount) awaiting review")
             Spacer()
+            // Compact / detailed row density
+            Button {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) { compact.toggle() }
+            } label: {
+                Image(systemName: compact ? "rectangle.grid.1x2" : "line.3.horizontal")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.white.opacity(0.8))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Toggle compact / detailed rows")
+
             // Quick theme cycle
             Circle()
                 .fill(LinearGradient(
@@ -259,6 +286,8 @@ struct SettingsView: View {
     @Bindable var store: PRStore
     let updater: SPUUpdater
     @AppStorage("dwpr.themeIndex") private var themeIndex = 0
+    @AppStorage("dwpr.compact") private var compact = false
+    @AppStorage("dwpr.showStreak") private var showStreak = true
 
     private let refreshOptions = [1, 2, 5, 15, 30, 60]
 
@@ -289,6 +318,8 @@ struct SettingsView: View {
 
             section("GENERAL") {
                 VStack(spacing: 12) {
+                    toggleRow("Show streak & stats", $showStreak)
+                    Divider()
                     settingRow("Merged total shows") {
                         Picker("", selection: $store.statsRange) {
                             ForEach(StatsRange.allCases, id: \.self) { range in
@@ -298,6 +329,10 @@ struct SettingsView: View {
                         .labelsHidden()
                         .fixedSize()
                     }
+                    .disabled(!showStreak)
+                    .opacity(showStreak ? 1 : 0.3)
+                    Divider()
+                    toggleRow("Compact rows", $compact)
                     Divider()
                     settingRow("Refresh every") {
                         Picker("", selection: $store.refreshMinutes) {
@@ -307,6 +342,41 @@ struct SettingsView: View {
                         }
                         .labelsHidden()
                         .fixedSize()
+                    }
+                }
+            }
+
+            section("REPOSITORIES") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(store.repoFilterActive
+                             ? "Showing \(store.allRepos.filter(store.isRepoIncluded).count) of \(store.allRepos.count)"
+                             : "Showing all repositories")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        // One button that flips between select-all / unselect-all.
+                        Button(store.repoFilterActive ? "Select all" : "Unselect all") {
+                            if store.repoFilterActive { store.selectAllRepos() }
+                            else { store.unselectAllRepos() }
+                        }
+                        .controlSize(.small)
+                    }
+
+                    if store.allRepos.isEmpty {
+                        Text("No repositories yet — open the popover and refresh.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 8) {
+                                ForEach(store.allRepos, id: \.self) { repo in
+                                    repoRow(repo)
+                                }
+                            }
+                            .padding(.trailing, 12)   // keep rows clear of the scroll bar
+                        }
+                        .frame(maxHeight: 168)
                     }
                 }
             }
@@ -367,6 +437,33 @@ struct SettingsView: View {
         }
     }
 
+    /// One repository row: a leading checkbox + name + owner. The whole row is
+    /// clickable to toggle inclusion.
+    private func repoRow(_ repo: String) -> some View {
+        let parts = repo.split(separator: "/", maxSplits: 1)
+        let name = parts.last.map(String.init) ?? repo
+        let owner = parts.count > 1 ? String(parts[0]) : ""
+        let included = store.isRepoIncluded(repo)
+        return Button {
+            store.toggleRepo(repo)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: included ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 14))
+                    .foregroundStyle(included ? Color.accentColor : Color.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name).font(.system(size: 12, weight: .medium))
+                    if !owner.isEmpty {
+                        Text(owner).font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private func swatch(_ t: AppTheme) -> some View {
         Circle()
             .fill(LinearGradient(colors: [t.heat[0], t.cover[0]], startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -420,6 +517,7 @@ struct SettingsView: View {
 private struct CoverView: View {
     let store: PRStore
     let theme: AppTheme
+    var showStreak: Bool = true
     @State private var spinning = false
 
     var body: some View {
@@ -454,53 +552,58 @@ private struct CoverView: View {
                 }
                 .foregroundStyle(.white.opacity(0.6))
             }
-            .padding(.bottom, 14)
+            .padding(.bottom, showStreak ? 14 : 0)
 
-            HStack(alignment: .bottom) {
-                HStack(spacing: 8) {
-                    Image(systemName: "flame.fill")
-                        .font(.system(size: 30))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color(hex: "ffd23f"), Color(hex: "ff7a18"), Color(hex: "ff2d20")],
-                                startPoint: .top,
-                                endPoint: .bottom
+            if showStreak {
+                HStack(alignment: .lastTextBaseline) {
+                    HStack(alignment: .lastTextBaseline, spacing: 8) {
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: 30))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [Color(hex: "ffd23f"), Color(hex: "ff7a18"), Color(hex: "ff2d20")],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
                             )
-                        )
-                    Text("\(streakValue) \(streakValue == 1 ? "day" : "days")")
-                        .font(.system(size: 38, weight: .bold))
-                        .tracking(-1)
-                        .foregroundStyle(.white)
-                }
-
-                Spacer()
-
-                HStack(spacing: 7) {
-                    Text("\(store.stats?.merged(in: store.statsRange) ?? 0) merged")
-                        .foregroundStyle(.white)
-                        .contentTransition(.numericText())
-                    Text("•")
-                        .foregroundStyle(.white.opacity(0.4))
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            store.statsRange = store.statsRange.next
-                        }
-                    } label: {
-                        Text(store.statsRange.rawValue)
-                            .foregroundStyle(.white.opacity(0.7))
-                            .contentTransition(.opacity)
-                            .contentShape(Rectangle())
+                        Text("\(streakValue) \(streakValue == 1 ? "day" : "days")")
+                            .font(.system(size: 34, weight: .bold))
+                            .tracking(-1)
+                            .foregroundStyle(.white)
+                            .contentTransition(.numericText())
+                        Text("streak")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.5))
                     }
-                    .buttonStyle(.plain)
-                    .help("Click to change the time range")
-                }
-                .font(.system(size: 12.5, weight: .semibold))
-                .padding(.bottom, 6)
-            }
-            .padding(.top, 4)
-            .padding(.bottom, 12)
 
-            if let graph = store.graph {
+                    Spacer()
+
+                    HStack(spacing: 7) {
+                        Text("\(store.stats?.merged(in: store.statsRange) ?? 0) merged")
+                            .foregroundStyle(.white)
+                            .contentTransition(.numericText())
+                        Text("•")
+                            .foregroundStyle(.white.opacity(0.4))
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                store.statsRange = store.statsRange.next
+                            }
+                        } label: {
+                            Text(store.statsRange.rawValue)
+                                .foregroundStyle(.white.opacity(0.7))
+                                .contentTransition(.opacity)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Click to change the time range")
+                    }
+                    .font(.system(size: 12.5, weight: .semibold))
+                }
+                .padding(.top, 4)
+                .padding(.bottom, 12)
+            }
+
+            if showStreak, let graph = store.graph {
                 CoverHeatmap(graph: graph, theme: theme)
             }
         }

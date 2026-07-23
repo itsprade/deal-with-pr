@@ -27,6 +27,12 @@ struct DealWithPRApp: App {
 final class PopoverPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    // We position the panel ourselves (top-anchored under the menu bar); don't
+    // let AppKit shove a tall panel upward and hide the header.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
 }
 
 /// Owns the store, the menu-bar status item, the popover panel, and the Settings
@@ -47,6 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var lastClosed = Date.distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Don't persist/restore windows — this is a menu-bar app; the only
+        // windows we show (popover panel, Settings) are created on demand.
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+
         NSApp.setActivationPolicy(.accessory)
         UNUserNotificationCenter.current().delegate = self
         NotificationCenter.default.addObserver(
@@ -55,6 +65,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         setupStatusItem()
         buildPanel()
         store.start()
+        closeStrayWindows()
+    }
+
+    /// Close any window opened at launch that we didn't ask for — e.g. a
+    /// Settings/Window scene restored by macOS from a previous version. Never
+    /// touches the status-bar window or our own panel/Settings windows.
+    private func closeStrayWindows() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let statusWindow = self.statusItem?.button?.window
+            for window in NSApp.windows where window.isVisible {
+                if window === self.panel || window === self.settingsWindow || window === statusWindow { continue }
+                if window.styleMask.contains(.titled) { window.close() }
+            }
+        }
     }
 
     // MARK: - Status item (menu-bar icon + badge)
@@ -175,21 +200,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         store.refresh()   // refresh-on-open, like the old MenuBarExtra
 
-        // Size to the current content, then anchor centered under the status item.
-        let size = hosting.fittingSize
-        panel.setContentSize(size)
+        let ideal = hosting.fittingSize
+        let screen = buttonWindow.screen ?? NSScreen.main ?? NSScreen.screens.first
+        let vf = screen?.visibleFrame ?? NSRect(origin: .zero, size: ideal)
+        let gap: CGFloat = 6
 
+        // Cap height to what fits under the menu bar; the list scrolls if needed.
+        let height = min(ideal.height, vf.height - gap * 2)
+        panel.setContentSize(NSSize(width: ideal.width, height: height))
+
+        // Anchor the panel's TOP just below the status item / menu bar so the
+        // header is never pushed up and hidden.
         let buttonRect = button.convert(button.bounds, to: nil)
         let onScreen = buttonWindow.convertToScreen(buttonRect)
-        var x = onScreen.midX - size.width / 2
-        let y = onScreen.minY - size.height - 6
+        let top = min(onScreen.minY - gap, vf.maxY - gap)
+        let originY = max(top - height, vf.minY + gap)
 
-        if let screen = buttonWindow.screen ?? NSScreen.main {
-            let vf = screen.visibleFrame
-            x = min(max(x, vf.minX + 8), vf.maxX - size.width - 8)
-        }
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        var x = onScreen.midX - ideal.width / 2
+        x = min(max(x, vf.minX + 8), vf.maxX - ideal.width - 8)
 
+        panel.setFrameOrigin(NSPoint(x: x, y: originY))
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
     }

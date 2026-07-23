@@ -63,6 +63,30 @@ final class PRStore {
         didSet { UserDefaults.standard.set(notifyChangesRequested, forKey: "dwpr.notif.changes") }
     }
 
+    /// When false, all repositories are shown (default). When true, only repos
+    /// in `repoFilter` are shown — which may be empty, meaning "show none".
+    /// Streaks/stats are global and unaffected either way.
+    var repoFilterActive: Bool = UserDefaults.standard.bool(forKey: "dwpr.repoFilterActive") {
+        didSet {
+            UserDefaults.standard.set(repoFilterActive, forKey: "dwpr.repoFilterActive")
+            resetNotificationBaseline()
+        }
+    }
+    /// The explicit allowlist of repositories ("owner/name") when active.
+    var repoFilter: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "dwpr.repoFilter") ?? []) {
+        didSet {
+            UserDefaults.standard.set(Array(repoFilter), forKey: "dwpr.repoFilter")
+            resetNotificationBaseline()
+        }
+    }
+
+    /// Re-baseline so changing the filter doesn't fire a burst of notifications
+    /// for repos that were simply hidden before.
+    private func resetNotificationBaseline() {
+        hasBaseline = false
+        hasMyBaseline = false
+    }
+
     // Private plumbing
     private let service = GitHubService()
     private var timer: Timer?
@@ -72,22 +96,63 @@ final class PRStore {
     private var hasMyBaseline = false
     private(set) var isRefreshing = false
 
+    // MARK: - Repository filter
+
+    /// True when the PR belongs to a repo the user wants to see (or no filter).
+    private func passesFilter(_ pr: PullRequest) -> Bool {
+        !repoFilterActive || repoFilter.contains(pr.repo)
+    }
+
+    /// Every repository seen across your PRs and review requests (sorted).
+    var allRepos: [String] {
+        Set((myPRs + reviewRequests).map(\.repo)).sorted { $0.lowercased() < $1.lowercased() }
+    }
+
+    /// Whether a repo is currently shown.
+    func isRepoIncluded(_ repo: String) -> Bool {
+        !repoFilterActive || repoFilter.contains(repo)
+    }
+
+    /// Toggle a repo's inclusion. If the filter was inactive, activate it seeded
+    /// with everything so unticking one repo just hides that one. If the result
+    /// then covers every known repo, deactivate again (show all, incl. future).
+    func toggleRepo(_ repo: String) {
+        if !repoFilterActive {
+            repoFilterActive = true
+            repoFilter = Set(allRepos)
+        }
+        if repoFilter.contains(repo) { repoFilter.remove(repo) } else { repoFilter.insert(repo) }
+        if repoFilter == Set(allRepos) { repoFilterActive = false }
+    }
+
+    /// Show every repository, including ones that appear in the future.
+    func selectAllRepos() {
+        repoFilter = []
+        repoFilterActive = false
+    }
+
+    /// Show none until the user picks specific repos.
+    func unselectAllRepos() {
+        repoFilter = []
+        repoFilterActive = true
+    }
+
     // MARK: - Derived views for the UI
 
-    /// Your PRs, most-recently-updated first (no draft grouping).
+    /// Your PRs, most-recently-updated first (no draft grouping), repo-filtered.
     var myPRsSorted: [PullRequest] {
-        myPRs.sorted { $0.updatedAt > $1.updatedAt }
+        myPRs.filter(passesFilter).sorted { $0.updatedAt > $1.updatedAt }
     }
 
     var humanReviews: [PullRequest] {
-        reviewRequests.filter { !$0.authorIsBot }.sorted { $0.updatedAt > $1.updatedAt }
+        reviewRequests.filter { !$0.authorIsBot && passesFilter($0) }.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     var botReviews: [PullRequest] {
-        reviewRequests.filter { $0.authorIsBot }.sorted { $0.updatedAt > $1.updatedAt }
+        reviewRequests.filter { $0.authorIsBot && passesFilter($0) }.sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    /// Badge count = human review requests awaiting you.
+    /// Badge count = human review requests awaiting you (repo-filtered).
     var reviewCount: Int { humanReviews.count }
 
     // MARK: - Lifecycle
@@ -177,13 +242,13 @@ final class PRStore {
     /// Notify when one of *your* PRs changes to approved or changes-requested.
     private func detectMyPRUpdates() {
         var current: [String: String] = [:]
-        for pr in myPRs { current[pr.url] = pr.reviewDecision?.rawValue ?? "none" }
+        for pr in myPRsSorted { current[pr.url] = pr.reviewDecision?.rawValue ?? "none" }
         defer { knownMyDecisions = current }
 
         guard hasMyBaseline else { hasMyBaseline = true; return }
         guard notificationsEnabled else { return }
 
-        for pr in myPRs {
+        for pr in myPRsSorted {
             guard let old = knownMyDecisions[pr.url] else { continue }   // newly seen — skip
             let new = pr.reviewDecision?.rawValue ?? "none"
             guard old != new else { continue }

@@ -213,22 +213,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func showPanel() {
+        store.refresh()   // refresh-on-open, like the old MenuBarExtra
+        layoutPanel()
+        NSApp.activate(ignoringOtherApps: true)
+        panel?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Size the panel to its content (capped to the screen so it scrolls if
+    /// taller) and anchor its TOP just below the menu bar so the header is never
+    /// hidden. The content is a fixed height, so this is stable across tabs.
+    private func layoutPanel() {
         guard let panel, let hosting = hostingView,
               let button = statusItem.button, let buttonWindow = button.window else { return }
-
-        store.refresh()   // refresh-on-open, like the old MenuBarExtra
 
         let ideal = hosting.fittingSize
         let screen = buttonWindow.screen ?? NSScreen.main ?? NSScreen.screens.first
         let vf = screen?.visibleFrame ?? NSRect(origin: .zero, size: ideal)
         let gap: CGFloat = 6
 
-        // Cap height to what fits under the menu bar; the list scrolls if needed.
         let height = min(ideal.height, vf.height - gap * 2)
         panel.setContentSize(NSSize(width: ideal.width, height: height))
 
-        // Anchor the panel's TOP just below the status item / menu bar so the
-        // header is never pushed up and hidden.
         let buttonRect = button.convert(button.bounds, to: nil)
         let onScreen = buttonWindow.convertToScreen(buttonRect)
         let top = min(onScreen.minY - gap, vf.maxY - gap)
@@ -238,8 +243,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         x = min(max(x, vf.minX + 8), vf.maxX - ideal.width - 8)
 
         panel.setFrameOrigin(NSPoint(x: x, y: originY))
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
     }
 
     private func hidePanel() {

@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Sparkle
+import ServiceManagement
 
 // Layout "3a": one card — green liquid-glass cover (streak + heatmap + pills),
 // then segmented tabs (Your PRs / People / Deps) + density toggle, then the list.
@@ -104,6 +105,16 @@ struct ContentView: View {
         }
     }
 
+    /// The current tab split into titled groups. "Your turn" (ball in your court)
+    /// then "Waiting" for Your PRs and People; Deps stays a single untitled group.
+    private var listGroups: [(title: String, items: [PullRequest])] {
+        switch tab {
+        case .yours:  return [("Your turn", store.myNeedsAction), ("Waiting", store.myWaiting)]
+        case .people: return [("Your turn", store.needsActionReviews), ("Waiting", store.waitingReviews)]
+        case .deps:   return [("Your turn", store.botNeedsAction), ("Waiting", store.botWaiting)]
+        }
+    }
+
     // MARK: - Tabs + density
 
     private var tabsBar: some View {
@@ -169,35 +180,65 @@ struct ContentView: View {
         if currentList.isEmpty {
             EmptyStateView(tab: emptyKind)
                 .frame(maxWidth: .infinity)
-                .frame(minHeight: 140, idealHeight: listHeight, maxHeight: listHeight)
+                .frame(height: listHeight)
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: compact ? 0 : 2) {
-                    ForEach(currentList) { pr in
-                        if compact {
-                            CompactRow(
-                                pr: pr, ns: rowNS,
-                                hovered: hoveredID == pr.id, hoverNS: hoverNS,
-                                setHovered: { setHover(pr.id, $0) }
-                            )
+                    // Always show both "Your turn" and "Waiting" headers; an empty
+                    // group gets a friendly, calm empty state.
+                    ForEach(listGroups, id: \.title) { group in
+                        sectionHeader(group.title)
+                        if group.items.isEmpty {
+                            GroupEmptyState(kind: group.title == "Your turn" ? .yourTurn : .waiting)
                         } else {
-                            DetailRow(
-                                pr: pr, showAuthor: tab != .yours, ns: rowNS,
-                                hovered: hoveredID == pr.id, hoverNS: hoverNS,
-                                setHovered: { setHover(pr.id, $0) }
-                            )
+                            ForEach(group.items) { rowView($0) }
                         }
                     }
                 }
                 .padding(.horizontal, 8)
                 .padding(.top, 8)
                 .padding(.bottom, 12)
+                // Drive the detail⇄compact matched-geometry morph explicitly, since
+                // `compact` is @AppStorage and doesn't animate via withAnimation.
+                .animation(.spring(response: 0.34, dampingFraction: 0.82), value: compact)
                 .overlay(ThinScroller().allowsHitTesting(false))
             }
             .scrollContentBackground(.hidden)   // let the panel's glass show through
             .scrollIndicators(.visible)
-            .frame(minHeight: 140, idealHeight: listHeight, maxHeight: listHeight)
+            .frame(height: listHeight)
         }
+    }
+
+    @ViewBuilder
+    private func rowView(_ pr: PullRequest) -> some View {
+        if compact {
+            CompactRow(
+                pr: pr, ns: rowNS,
+                hovered: hoveredID == pr.id, hoverNS: hoverNS,
+                setHovered: { setHover(pr.id, $0) }
+            )
+        } else {
+            DetailRow(
+                pr: pr, showAuthor: tab != .yours, ns: rowNS,
+                hovered: hoveredID == pr.id, hoverNS: hoverNS,
+                setHovered: { setHover(pr.id, $0) }
+            )
+        }
+    }
+
+    /// "Your turn ————" / "Waiting ————" group header: a label + a hairline rule.
+    private func sectionHeader(_ title: String) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(title == "Your turn" ? Color(hex: "7cc0ff") : Color.white.opacity(0.4))
+            Rectangle()
+                .fill(Color.white.opacity(0.1))
+                .frame(height: 1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 10)
+        .padding(.bottom, 3)
     }
 
     private var emptyKind: EmptyStateView.Kind {
@@ -303,11 +344,23 @@ struct SettingsView: View {
     @AppStorage("dwpr.themeIndex") private var themeIndex = 0
     @AppStorage("dwpr.compact") private var compact = false
     @AppStorage("dwpr.showStreak") private var showStreak = true
+    @State private var openAtLogin = false
 
     private let refreshOptions = [1, 2, 5, 15, 30, 60]
 
     private var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+    }
+
+    /// Register/unregister the app as a macOS login item.
+    private func setOpenAtLogin(_ on: Bool) {
+        do {
+            if on { try SMAppService.mainApp.register() }
+            else { try SMAppService.mainApp.unregister() }
+            openAtLogin = on
+        } catch {
+            openAtLogin = (SMAppService.mainApp.status == .enabled)   // revert to truth
+        }
     }
 
     var body: some View {
@@ -333,6 +386,11 @@ struct SettingsView: View {
 
             section("GENERAL") {
                 VStack(spacing: 12) {
+                    toggleRow("Open at login", Binding(
+                        get: { openAtLogin },
+                        set: { setOpenAtLogin($0) }
+                    ))
+                    Divider()
                     toggleRow("Show streak & stats", $showStreak)
                     Divider()
                     settingRow("Merged total shows") {
@@ -424,6 +482,7 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(20)
+        .onAppear { openAtLogin = (SMAppService.mainApp.status == .enabled) }
     }
 
     /// A titled section: small-caps label above a rounded card.
@@ -926,6 +985,92 @@ private struct LoadingView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: 440)
+    }
+}
+
+/// A calm empty state shown under a group header when that group has no PRs.
+private struct GroupEmptyState: View {
+    enum Kind { case yourTurn, waiting }
+    let kind: Kind
+    @State private var breathe = false
+
+    private var message: String {
+        switch kind {
+        case .yourTurn: return "Nothing in your court — relax."
+        case .waiting:  return "Nothing waiting on others."
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 7) {
+            switch kind {
+            case .yourTurn:
+                SteamyCup()
+            case .waiting:
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 18))
+                    .foregroundStyle(Color.white.opacity(0.4))
+                    .scaleEffect(breathe ? 1.08 : 0.94)
+                    .opacity(breathe ? 0.85 : 0.5)
+            }
+            Text(message)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Color.white.opacity(0.4))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.9).repeatForever(autoreverses: true)) {
+                breathe = true
+            }
+        }
+    }
+}
+
+/// A coffee cup with two steam wisps gently rising and fading above it.
+private struct SteamyCup: View {
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            HStack(spacing: 4) {
+                SteamWisp(duration: 1.7)
+                SteamWisp(duration: 2.1)
+            }
+            .offset(y: -15)
+            Image(systemName: "cup.and.saucer.fill")
+                .font(.system(size: 18))
+                .foregroundStyle(Color.white.opacity(0.45))
+        }
+        .frame(height: 34)
+    }
+}
+
+private struct SteamPhase { var y: CGFloat = 3; var opacity: Double = 0; var x: CGFloat = 0 }
+
+private struct SteamWisp: View {
+    var duration: Double = 1.7
+
+    var body: some View {
+        Capsule()
+            .fill(Color.white.opacity(0.5))
+            .frame(width: 2, height: 7)
+            .blur(radius: 0.6)
+            .keyframeAnimator(initialValue: SteamPhase()) { view, s in
+                view.offset(x: s.x, y: s.y).opacity(s.opacity)
+            } keyframes: { _ in
+                KeyframeTrack(\.y) {
+                    CubicKeyframe(3, duration: duration * 0.12)
+                    CubicKeyframe(-11, duration: duration * 0.88)
+                }
+                KeyframeTrack(\.opacity) {
+                    LinearKeyframe(0, duration: duration * 0.05)
+                    LinearKeyframe(0.5, duration: duration * 0.35)
+                    LinearKeyframe(0, duration: duration * 0.60)
+                }
+                KeyframeTrack(\.x) {
+                    CubicKeyframe(-1.5, duration: duration * 0.5)
+                    CubicKeyframe(1.5, duration: duration * 0.5)
+                }
+            }
     }
 }
 

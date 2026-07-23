@@ -85,6 +85,7 @@ final class PRStore {
     private func resetNotificationBaseline() {
         hasBaseline = false
         hasMyBaseline = false
+        hasActivityBaseline = false
     }
 
     // Private plumbing
@@ -94,6 +95,8 @@ final class PRStore {
     private var hasBaseline = false
     private var knownMyDecisions: [String: String] = [:]
     private var hasMyBaseline = false
+    private var knownReviewActivity: [String: Date] = [:]
+    private var hasActivityBaseline = false
     private(set) var isRefreshing = false
 
     // MARK: - Repository filter
@@ -139,21 +142,48 @@ final class PRStore {
 
     // MARK: - Derived views for the UI
 
-    /// Your PRs, most-recently-updated first (no draft grouping), repo-filtered.
+    /// Your PRs, ball-in-your-court first, then most-recent-activity, repo-filtered.
     var myPRsSorted: [PullRequest] {
-        myPRs.filter(passesFilter).sorted { $0.updatedAt > $1.updatedAt }
+        myPRs
+            .filter(passesFilter)
+            .sorted { a, b in
+                if a.needsAttention != b.needsAttention { return a.needsAttention }
+                return (a.lastActivityAt ?? a.updatedAt) > (b.lastActivityAt ?? b.updatedAt)
+            }
     }
 
+    /// Your PRs where someone else acted last, and those you're waiting on.
+    var myNeedsAction: [PullRequest] { myPRsSorted.filter(\.needsAttention) }
+    var myWaiting: [PullRequest] { myPRsSorted.filter { !$0.needsAttention } }
+
+    /// Human review requests, ball-in-your-court first, then most-recent-activity.
     var humanReviews: [PullRequest] {
-        reviewRequests.filter { !$0.authorIsBot && passesFilter($0) }.sorted { $0.updatedAt > $1.updatedAt }
+        reviewRequests
+            .filter { !$0.authorIsBot && passesFilter($0) }
+            .sorted { a, b in
+                if a.needsAttention != b.needsAttention { return a.needsAttention }
+                return (a.lastActivityAt ?? a.updatedAt) > (b.lastActivityAt ?? b.updatedAt)
+            }
     }
+
+    /// Reviews where the ball is in your court, and those you're waiting on.
+    var needsActionReviews: [PullRequest] { humanReviews.filter(\.needsAttention) }
+    var waitingReviews: [PullRequest] { humanReviews.filter { !$0.needsAttention } }
 
     var botReviews: [PullRequest] {
-        reviewRequests.filter { $0.authorIsBot && passesFilter($0) }.sorted { $0.updatedAt > $1.updatedAt }
+        reviewRequests
+            .filter { $0.authorIsBot && passesFilter($0) }
+            .sorted { a, b in
+                if a.needsAttention != b.needsAttention { return a.needsAttention }
+                return (a.lastActivityAt ?? a.updatedAt) > (b.lastActivityAt ?? b.updatedAt)
+            }
     }
 
-    /// Badge count = human review requests awaiting you (repo-filtered).
-    var reviewCount: Int { humanReviews.count }
+    var botNeedsAction: [PullRequest] { botReviews.filter(\.needsAttention) }
+    var botWaiting: [PullRequest] { botReviews.filter { !$0.needsAttention } }
+
+    /// Badge count = reviews actually needing you (ball in your court, repo-filtered).
+    var reviewCount: Int { needsActionReviews.count }
 
     // MARK: - Lifecycle
 
@@ -190,6 +220,7 @@ final class PRStore {
                 loadState = .loaded
                 detectNewReviewRequests()
                 detectMyPRUpdates()
+                detectNewReviewActivity()
             } catch let error as GitHubError {
                 loadState = .error(error)
             } catch {
@@ -264,6 +295,26 @@ final class PRStore {
             default:
                 break
             }
+        }
+    }
+
+    /// Notify when a review PR you'd already seen gets new activity by someone
+    /// else (its most-recent comment/review advanced and the ball is now in your
+    /// court). Brand-new review requests are handled by detectNewReviewRequests,
+    /// so we only fire for URLs we've seen before to avoid a double notification.
+    private func detectNewReviewActivity() {
+        var current: [String: Date] = [:]
+        for pr in humanReviews { if let at = pr.lastActivityAt { current[pr.url] = at } }
+        defer { knownReviewActivity = current }
+
+        guard hasActivityBaseline else { hasActivityBaseline = true; return }
+        guard notificationsEnabled, notifyReviewRequested else { return }
+
+        for pr in humanReviews where pr.needsAttention {
+            guard let now = pr.lastActivityAt, let old = knownReviewActivity[pr.url], now > old else { continue }
+            postNotification(title: "New activity on your review",
+                             body: "\(pr.repoShort) #\(pr.number) · \(pr.title)",
+                             url: pr.url)
         }
     }
 

@@ -16,6 +16,12 @@ struct PullRequest: Identifiable, Hashable, Sendable {
     let ciStatus: CIStatus?
     let authorLogin: String?
     let authorIsBot: Bool
+    /// True when the ball is in your court: the most recent comment/review is by
+    /// someone else, or it's a fresh review request with no activity yet. Only
+    /// meaningful for review-requested PRs (false for your own authored PRs).
+    let needsAttention: Bool
+    /// Timestamp of the most recent comment/review, used for ordering.
+    let lastActivityAt: Date?
 
     /// Just the repository name, e.g. "app-shell" from "tailor-platform/app-shell".
     var repoShort: String {
@@ -123,6 +129,7 @@ struct GraphQLResponse: Decodable {
         let lastYear: Count
     }
     struct Viewer: Decodable {
+        let login: String
         let pullRequests: NodeList
         let contributionsCollection: Contributions
     }
@@ -163,9 +170,38 @@ struct RawPR: Decodable {
     let repository: Repo
     let author: Author?
     let commits: Commits?
+    let timelineItems: TimelineItems?
 
     struct Repo: Decodable {
         let nameWithOwner: String
+    }
+    /// The most recent comment / review / commit on the PR, used to decide whose
+    /// court the ball is in. The three union members expose different shapes, so
+    /// the node carries them all optionally and exposes unified accessors.
+    struct TimelineItems: Decodable {
+        let nodes: [Node]
+        struct Node: Decodable {
+            let typeName: String
+            let author: TLAuthor?      // IssueComment / PullRequestReview
+            let createdAt: Date?       // IssueComment / PullRequestReview
+            let commit: TLCommit?      // PullRequestCommit
+            enum CodingKeys: String, CodingKey {
+                case typeName = "__typename"
+                case author, createdAt, commit
+            }
+            struct TLAuthor: Decodable { let login: String }
+            struct TLCommit: Decodable {
+                let committedDate: Date?
+                let author: CommitAuthor?
+                struct CommitAuthor: Decodable { let user: TLAuthor? }
+            }
+
+            /// Login of whoever produced this activity (comment/review author, or
+            /// the commit's GitHub user), if resolvable.
+            var actorLogin: String? { author?.login ?? commit?.author?.user?.login }
+            /// When this activity happened.
+            var occurredAt: Date? { createdAt ?? commit?.committedDate }
+        }
     }
     struct Author: Decodable {
         let login: String
@@ -202,9 +238,23 @@ struct RawPR: Decodable {
         return CIStatus(rawValue: state)
     }
 
-    /// Convert to the flattened UI model.
-    func toPullRequest() -> PullRequest {
-        PullRequest(
+    /// Convert to the flattened UI model. `viewerLogin` is supplied only for the
+    /// review set so we can compute whether the ball is in the viewer's court.
+    func toPullRequest(viewerLogin: String? = nil) -> PullRequest {
+        // Ball is in your court when the most recent activity (comment, review,
+        // or commit) is by someone other than you — or there's none yet (a fresh
+        // request). Unresolvable actor → treat as "someone else". timelineItems
+        // is nil only if not queried (shouldn't happen; safe default false).
+        let lastActivity = timelineItems?.nodes.last
+        let needsAttention: Bool
+        if timelineItems == nil {
+            needsAttention = false
+        } else if let actor = lastActivity?.actorLogin {
+            needsAttention = actor.caseInsensitiveCompare(viewerLogin ?? "") != .orderedSame
+        } else {
+            needsAttention = true
+        }
+        return PullRequest(
             id: url,
             number: number,
             title: title,
@@ -215,7 +265,9 @@ struct RawPR: Decodable {
             reviewDecision: reviewDecision.flatMap(ReviewDecision.init(rawValue:)),
             ciStatus: ciStatus,
             authorLogin: author?.login,
-            authorIsBot: isBot
+            authorIsBot: isBot,
+            needsAttention: needsAttention,
+            lastActivityAt: lastActivity?.occurredAt
         )
     }
 }

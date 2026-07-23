@@ -78,6 +78,7 @@ struct GitHubService: Sendable {
         return """
         {
           viewer {
+            login
             pullRequests(first: 50, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
               nodes {
                 number
@@ -88,6 +89,14 @@ struct GitHubService: Sendable {
                 reviewDecision
                 repository { nameWithOwner }
                 commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+                timelineItems(last: 1, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT]) {
+                  nodes {
+                    __typename
+                    ... on IssueComment { author { login } createdAt }
+                    ... on PullRequestReview { author { login } createdAt }
+                    ... on PullRequestCommit { commit { committedDate author { user { login } } } }
+                  }
+                }
               }
             }
             contributionsCollection {
@@ -109,6 +118,14 @@ struct GitHubService: Sendable {
                 author { login __typename }
                 repository { nameWithOwner }
                 commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+                timelineItems(last: 1, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT]) {
+                  nodes {
+                    __typename
+                    ... on IssueComment { author { login } createdAt }
+                    ... on PullRequestReview { author { login } createdAt }
+                    ... on PullRequestCommit { commit { committedDate author { user { login } } } }
+                  }
+                }
               }
             }
           }
@@ -222,8 +239,9 @@ struct GitHubService: Sendable {
             throw GitHubError.decodingFailed(String(raw.prefix(200)))
         }
 
-        let mine = response.data.viewer.pullRequests.nodes.map { $0.toPullRequest() }
-        let review = response.data.search.nodes.map { $0.toPullRequest() }
+        let viewerLogin = response.data.viewer.login
+        let mine = response.data.viewer.pullRequests.nodes.map { $0.toPullRequest(viewerLogin: viewerLogin) }
+        let review = response.data.search.nodes.map { $0.toPullRequest(viewerLogin: viewerLogin) }
         let stats = Stats(
             currentStreak: computeStreak(response.data.viewer.contributionsCollection.contributionCalendar),
             mergedThisMonth: response.data.month.issueCount,

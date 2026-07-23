@@ -71,10 +71,25 @@ struct ContentView: View {
                     ))
                     .clipped()
             }
-            // Colored hero wash only when the streak section is shown; otherwise
-            // the header sits on plain glass.
+            // Full hero wash when the streak section is shown; a slim colored
+            // band behind the header otherwise (never plain glass at the top).
             .background {
-                if showStreak { CoverAtmosphere(theme: theme) }
+                if showStreak {
+                    CoverAtmosphere(theme: theme)
+                } else {
+                    LinearGradient(
+                        stops: [
+                            .init(color: theme.cover[0], location: 0.00),
+                            .init(color: theme.cover[1], location: 0.55),
+                            .init(color: .clear, location: 1.00)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    // Match the hero gradient's height when streaks are shown.
+                    .frame(height: 180)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                }
             }
         }
     }

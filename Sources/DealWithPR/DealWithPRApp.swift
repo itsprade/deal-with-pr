@@ -66,6 +66,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         buildPanel()
         store.start()
         closeStrayWindows()
+        openPopoverOnFirstLaunch()
+    }
+
+    /// The first time the app is ever launched, pop the panel open so new users
+    /// can see where the menu-bar item lives. Only once — it runs at login for
+    /// most users and opening every time would be intrusive.
+    private func openPopoverOnFirstLaunch() {
+        let key = "dwpr.didFirstLaunchOpen"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        // Small delay so the status item is placed in the menu bar first (its
+        // window frame is needed to anchor the panel).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.showPanel()
+        }
     }
 
     /// Close any window opened at launch that we didn't ask for — e.g. a
@@ -137,6 +152,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
+        // Always render the popover as dark glass — the UI is designed for a dark
+        // surface (white text, themed gradient), so light mode must not wash it out.
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.level = .popUpMenu
         panel.isFloatingPanel = true
         panel.isReleasedWhenClosed = false

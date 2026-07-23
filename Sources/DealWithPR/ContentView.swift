@@ -364,18 +364,17 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             // Header: mark, then title, then version — stacked & centered
-            VStack(spacing: 8) {
-                AppLogo(size: 40)
+            VStack(spacing: 4) {
+                AppLogo(size: 32)
                 Text("Deal with PR Settings")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: 15, weight: .bold))
                 Text("v\(currentVersion)")
-                    .font(.system(size: 11.5))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
-            .padding(.bottom, 2)
 
             section("THEME") {
                 HStack(spacing: 10) {
@@ -385,7 +384,7 @@ struct SettingsView: View {
             }
 
             section("GENERAL") {
-                VStack(spacing: 12) {
+                VStack(spacing: 9) {
                     toggleRow("Open at login", Binding(
                         get: { openAtLogin },
                         set: { setOpenAtLogin($0) }
@@ -422,9 +421,7 @@ struct SettingsView: View {
             section("REPOSITORIES") {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text(store.repoFilterActive
-                             ? "Showing \(store.allRepos.filter(store.isRepoIncluded).count) of \(store.allRepos.count)"
-                             : "Showing all repositories")
+                        Text("Show PR from (\(store.allRepos.filter(store.isRepoIncluded).count) of \(store.allRepos.count))")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -447,15 +444,18 @@ struct SettingsView: View {
                                     repoRow(repo)
                                 }
                             }
-                            .padding(.trailing, 12)   // keep rows clear of the scroll bar
+                            .padding(.trailing, 10)   // keep rows inset from the edge
+                            .overlay(ThinScroller().allowsHitTesting(false))
                         }
-                        .frame(maxHeight: 168)
+                        .scrollIndicators(.visible)
+                        .padding(.trailing, -10)   // extend the scroll bar to the card's edge
+                        .frame(maxHeight: 140)
                     }
                 }
             }
 
             section("NOTIFICATIONS") {
-                VStack(spacing: 11) {
+                VStack(spacing: 9) {
                     toggleRow("Enable notifications", $store.notificationsEnabled)
                     Divider()
                     toggleRow("Review requested", $store.notifyReviewRequested)
@@ -478,19 +478,20 @@ struct SettingsView: View {
             }
 
             credit
-                .padding(.top, 4)
+                .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .padding(20)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
         .onAppear { openAtLogin = (SMAppService.mainApp.status == .enabled) }
     }
 
     /// A titled section: small-caps label above a rounded card.
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             sectionLabel(title)
             content()
-                .padding(12)
+                .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -511,31 +512,27 @@ struct SettingsView: View {
         }
     }
 
-    /// One repository row: a leading checkbox + name + owner. The whole row is
-    /// clickable to toggle inclusion.
+    /// One repository row: name + owner on the left, an include toggle on the right.
     private func repoRow(_ repo: String) -> some View {
         let parts = repo.split(separator: "/", maxSplits: 1)
         let name = parts.last.map(String.init) ?? repo
         let owner = parts.count > 1 ? String(parts[0]) : ""
-        let included = store.isRepoIncluded(repo)
-        return Button {
-            store.toggleRepo(repo)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: included ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 14))
-                    .foregroundStyle(included ? Color.accentColor : Color.secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(name).font(.system(size: 12, weight: .medium))
-                    if !owner.isEmpty {
-                        Text(owner).font(.system(size: 10)).foregroundStyle(.secondary)
-                    }
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name).font(.system(size: 12, weight: .medium))
+                if !owner.isEmpty {
+                    Text(owner).font(.system(size: 10)).foregroundStyle(.secondary)
                 }
-                Spacer()
             }
-            .contentShape(Rectangle())
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { store.isRepoIncluded(repo) },
+                set: { _ in store.toggleRepo(repo) }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
         }
-        .buttonStyle(.plain)
     }
 
     private func swatch(_ t: AppTheme) -> some View {
@@ -573,13 +570,16 @@ struct SettingsView: View {
     }
 
     private var credit: some View {
-        (Text("Made by ").foregroundColor(.secondary) + Text("@itsprade").foregroundColor(.primary).bold())
-            .font(.system(size: 11.5))
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-            .onTapGesture { open("https://itsprade.com/") }
-            .help("itsprade.com")
-            .padding(.bottom, 8)
+        VStack(spacing: 8) {
+            SteamyCup()
+            (Text("Made by ").foregroundColor(.secondary) + Text("@itsprade").foregroundColor(.primary).bold())
+                .font(.system(size: 11.5))
+                .contentShape(Rectangle())
+                .onTapGesture { open("https://itsprade.com/") }
+                .help("itsprade.com")
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 8)
     }
 
     private func open(_ urlString: String) {
@@ -811,9 +811,9 @@ private struct DetailRow: View {
                         StatusDot(status: pr.ciStatus, size: 7, glow: false)
                             .padding(.top, 4)
                             .matchedGeometryEffect(id: "dot-\(pr.id)", in: ns)
-                        Text(pr.title)
+                        (Text("#\(pr.number) ").foregroundColor(.white.opacity(0.5))
+                            + Text(pr.title).foregroundColor(.white.opacity(0.95)))
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(0.95))
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                             .lineSpacing(1.5)
@@ -1038,7 +1038,7 @@ private struct SteamyCup: View {
             .offset(y: -15)
             Image(systemName: "cup.and.saucer.fill")
                 .font(.system(size: 18))
-                .foregroundStyle(Color.white.opacity(0.45))
+                .foregroundStyle(Color.primary.opacity(0.45))
         }
         .frame(height: 34)
     }
@@ -1051,7 +1051,7 @@ private struct SteamWisp: View {
 
     var body: some View {
         Capsule()
-            .fill(Color.white.opacity(0.5))
+            .fill(Color.primary.opacity(0.5))
             .frame(width: 2, height: 7)
             .blur(radius: 0.6)
             .keyframeAnimator(initialValue: SteamPhase()) { view, s in
